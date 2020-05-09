@@ -1,0 +1,20 @@
+---
+- hosts: all
+  vars:
+    ansible_become_method: su
+    packages:
+      - sudo
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Install python3
+      raw: "pkg install --yes python3"
+    - name: Install packages for ansible
+      package:
+        name: "{{ packages }}"
+        state: present
+    - name: Configure sudoers
+      lineinfile:
+        path: /usr/local/etc/sudoers
+        line: "%wheel ALL=(ALL) ALL"
+...
