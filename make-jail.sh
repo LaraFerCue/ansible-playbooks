@@ -114,6 +114,21 @@ JAIL_CONF
 		"ifconfig_${name}1"="inet 1.0.0.1${vnet_number}/24"
 	sysrc -f "${BASEDIR}/${name}/etc/rc.conf" \
 		defaultrouter="1.0.0.1"
+	sysrc -f "${BASEDIR}/${name}/etc/rc.conf" \
+		sshd_enable=YES
+	chroot "${BASEDIR}/${name}" pw useradd ansible -G wheel,operator \
+		-s /bin/tcsh -h 0 -m
+
+	local port=$(printf "22%02d" ${vnet_number})
+
+	configure_pf
+	awk -v port="${port}" -v ip="1.0.0.1${vnet_number}" '/^pass/ { 
+		printf "rdr on $ext_if proto tcp from any to any port %d -> %s port 22\n", port, ip;
+	}
+	{
+		print $0;
+	}' /etc/pf.conf > /tmp/pf.conf
+	mv /tmp/pf.conf /etc/pf.conf
 }
 
 configure_pf() {
@@ -147,7 +162,6 @@ if ! zfs list "${ZPOOL}${BASEDIR}/${VERSION}" > /dev/null 2> /dev/null ; then
 fi
 
 create_jail "${VERSION}" "${NAME}"
-configure_pf
 
 if ! grep -qE 'net.inet.ip.forwarding=1' /etc/sysctl.conf ; then
 	echo 'net.inet.ip.forwarding=1' >> /etc/sysctl.conf
