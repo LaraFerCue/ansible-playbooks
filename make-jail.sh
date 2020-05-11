@@ -71,6 +71,7 @@ create_base_jail() {
 	env PAGER=cat freebsd-update --currently-running "${version}" \
 		-b "${BASEDIR}/${version}" fetch
 	freebsd-update -b "${BASEDIR}/${version}" install || true
+	cp -a /etc/resolv.conf "${BASEDIR}/${version}/etc/resolv.conf"
 	zfs snapshot "${ZPOOL}${BASEDIR}/${version}@base_jail"
 }
 
@@ -85,11 +86,41 @@ create_jail() {
 		echo "\$basedir = \"${BASEDIR}\";" >> /etc/jail.conf
 	fi
 
+	if ! grep -qE "^ifconfig_jailsnat" /etc/rc.conf ; then
+		local bridge_number=$(ifconfig -g bridge | wc -w | tr -d '[:space:]')
+		sysrc cloned_interfaces+="bridge${bridge_number}"
+		sysrc "ifconfig_bridge${bridge_number}_name"="jailsnat"
+		sysrc ifconfig_jailsnat="inet 1.0.0.1/24"
+	fi
 	cat >> /etc/jail.conf << JAIL_CONF
 ${name} {
 	osrelease = "${version}";
+
+	vnet.interface = "${name}1";
 }
 JAIL_CONF
+	
+	local vnet_number=$(ifconfig -g epair | wc -w)
+	: $(( vnet_number /= 2))
+	if ! grep -qE "_name=\"${name}0\"" /etc/rc.conf ; then
+		sysrc cloned_interfaces+="epair${vnet_number}"
+		sysrc "ifconfig_epair${vnet_number}a_name=${name}0"
+		sysrc "ifconfig_epair${vnet_number}b_name=${name}1"
+
+		sysrc ifconfig_jailsnat+="addm ${name}0"
+	fi
+
+	sysrc -f "${BASEDIR}/${name}/etc/rc.conf" \
+		"ifconfig_${name}1"="inet 1.0.0.1${vnet_number}/24"
+	sysrc -f "${BASEDIR}/${name}/etc/rc.conf" \
+		defaultrouter="1.0.0.1"
+}
+
+configure_pf() {
+	if ! [ -r /etc/pf.conf ] ; then
+		cp -a "${SRCDIR}/pf.conf" /etc/pf.conf
+		sysrc pf_enable="YES"
+	fi
 }
 
 if [ -z "${NAME}" ] || [ -z "${VERSION}" ] ; then
@@ -116,3 +147,8 @@ if ! zfs list "${ZPOOL}${BASEDIR}/${VERSION}" > /dev/null 2> /dev/null ; then
 fi
 
 create_jail "${VERSION}" "${NAME}"
+configure_pf
+
+if ! grep -qE 'net.inet.ip.forwarding=1' /etc/sysctl.conf ; then
+	echo 'net.inet.ip.forwarding=1' >> /etc/sysctl.conf
+fi
